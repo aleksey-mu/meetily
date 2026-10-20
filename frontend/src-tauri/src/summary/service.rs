@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -544,6 +544,17 @@ impl SummaryService {
         };
 
         let client = reqwest::Client::new();
+        let progress_app = _app.clone();
+        let progress_meeting_id = meeting_id.clone();
+        let on_progress = move |message: &str| {
+            let _ = progress_app.emit(
+                "summary-progress",
+                serde_json::json!({
+                    "meetingId": &progress_meeting_id,
+                    "message": message,
+                }),
+            );
+        };
         let result = generate_meeting_summary(
             &client,
             &provider,
@@ -564,6 +575,7 @@ impl SummaryService {
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
             cached_english.as_deref(),
+            Some(&on_progress),
         )
         .await;
 

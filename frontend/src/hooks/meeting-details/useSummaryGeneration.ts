@@ -9,6 +9,7 @@ import {
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 
@@ -95,6 +96,7 @@ export function useSummaryGeneration({
 }: UseSummaryGenerationProps) {
   const restored = initialSummary?.meeting_id === meeting.id ? initialSummary : null;
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>(() => restoredSummaryStatus(restored));
+  const [progressMessage, setProgressMessage] = useState('');
   const [summaryError, setSummaryError] = useState<string | null>(() =>
     restoredSummaryStatus(restored) === 'error'
       ? restored?.error || 'Summary generation failed. Please retry.'
@@ -117,11 +119,9 @@ export function useSummaryGeneration({
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {
     switch (status) {
       case 'processing':
-        return 'Processing transcript...';
       case 'summarizing':
-        return 'Generating summary...';
       case 'regenerating':
-        return 'Regenerating summary...';
+        return progressMessage || 'Generating summary...';
       case 'completed':
         return 'Summary completed';
       case 'error':
@@ -129,7 +129,7 @@ export function useSummaryGeneration({
       default:
         return '';
     }
-  }, []);
+  }, [progressMessage]);
 
   const finishGeneration = useCallback(async (
     generationId: number,
@@ -279,6 +279,17 @@ export function useSummaryGeneration({
   pollingResultRef.current = handlePollingResult;
 
   useEffect(() => {
+    const unlisten = listen<{ meetingId: string; message: string }>('summary-progress', (event) => {
+      if (event.payload.meetingId === visibleMeetingIdRef.current) {
+        setProgressMessage(event.payload.message);
+      }
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
+
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -323,6 +334,7 @@ export function useSummaryGeneration({
     const generationId = ++generationIdRef.current;
     activeProcessIdRef.current = null;
     setSummaryStatus(isRegeneration ? 'regenerating' : 'processing');
+    setProgressMessage('Starting summary...');
     setSummaryError(null);
 
     try {

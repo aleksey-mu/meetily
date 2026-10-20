@@ -361,6 +361,12 @@ pub(crate) struct GeneratedMeetingSummary {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn report_summary_progress(on_progress: Option<&(dyn Fn(&str) + Send + Sync)>, message: &str) {
+    if let Some(callback) = on_progress {
+        callback(message);
+    }
+}
+
 pub(crate) async fn generate_meeting_summary(
     client: &Client,
     provider: &LLMProvider,
@@ -381,6 +387,7 @@ pub(crate) async fn generate_meeting_summary(
     summary_language: Option<&str>,
     detected_transcript_language: Option<&str>,
     cached_english: Option<&str>,
+    on_progress: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<GeneratedMeetingSummary, String> {
     if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
         return Err("Summary generation was cancelled".to_string());
@@ -404,6 +411,10 @@ pub(crate) async fn generate_meeting_summary(
                 let num_chunks = chunks.len();
                 let mut chunk_summaries = Vec::with_capacity(num_chunks);
                 for (index, chunk) in chunks.iter().enumerate() {
+                    report_summary_progress(
+                        on_progress,
+                        &format!("Summarizing part {} of {}", index + 1, num_chunks),
+                    );
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
                         return Err("Summary generation was cancelled".to_string());
                     }
@@ -472,6 +483,7 @@ pub(crate) async fn generate_meeting_summary(
                 content_to_summarize = if chunk_summaries.len() == 1 {
                     chunk_summaries.remove(0)
                 } else {
+                    report_summary_progress(on_progress, "Combining parts");
                     let prompt = build_combine_summary_user_prompt(&chunk_summaries.join("\n---\n"));
                     let completion = generate_summary(
                         client, provider, model_name, api_key,
@@ -491,6 +503,7 @@ pub(crate) async fn generate_meeting_summary(
             }
 
             info!("Generating final markdown report with template: {}", template_id);
+            report_summary_progress(on_progress, "Writing the report");
             let final_system_prompt = build_final_report_system_prompt(
                 &template.to_section_instructions(),
                 &template.to_markdown_structure(),
@@ -517,6 +530,7 @@ pub(crate) async fn generate_meeting_summary(
     let (final_markdown, normalization_fallback) =
         match resolve_final_language_action(summary_language, detected_transcript_language) {
             FinalLanguageAction::Translate(language) => {
+                report_summary_progress(on_progress, "Translating");
                 let translated = translate_markdown(
                     client, provider, model_name, api_key, &english_markdown, language,
                     ollama_endpoint, custom_openai_endpoint, max_tokens, temperature, top_p,
@@ -528,6 +542,7 @@ pub(crate) async fn generate_meeting_summary(
                 (translated.markdown, false)
             }
             FinalLanguageAction::NormalizeEnglish => {
+                report_summary_progress(on_progress, "Checking language");
                 let (normalized, fallback) = english_markdown_after_normalization_result(
                     &english_markdown,
                     normalize_markdown_to_english(
